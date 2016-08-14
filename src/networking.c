@@ -54,6 +54,28 @@
 #define CC_OCI_IPROUTE2_BIN "ip"
 #endif
 
+/*!
+ * Free the specified \ref oci_cfg_net_interface
+ *
+ * \param if_cfg \ref oci_cfg_net_interface
+ */
+void
+cc_oci_net_interface_free (struct cc_oci_net_if_cfg *if_cfg)
+{
+	if (!if_cfg) {
+		return;
+	}
+
+	g_free_if_set (if_cfg->mac_address);
+	g_free_if_set (if_cfg->ip_address);
+	g_free_if_set (if_cfg->subnet_mask);
+	g_free_if_set (if_cfg->ipv6_address);
+	g_free_if_set (if_cfg->ifname);
+	g_free_if_set (if_cfg->bridge);
+	g_free_if_set (if_cfg->tap_device);
+
+	g_free (if_cfg);
+}
 
 /*!
  * Request to create a named tap interface
@@ -166,6 +188,7 @@ cc_oci_netlink_run(const gchar *cmd_line) {
  */
 gboolean
 cc_oci_network_create(const struct cc_oci_config *const config) {
+	struct cc_oci_net_if_cfg *if_cfg = NULL;
 	gchar cmd_line[1024];
 
 	if (config == NULL){
@@ -174,11 +197,14 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 	}
 
 	/* No networking enabled */
-	if (config->net.ifname == NULL) {
+	if (config->net.interfaces == NULL) {
 		return true;
 	}
 
-	if (!cc_oci_tap_create(config->net.tap_device)) {
+	if_cfg = (struct cc_oci_net_if_cfg *)
+		g_slist_nth_data(config->net.interfaces, 0);
+
+	if (!cc_oci_tap_create(if_cfg->tap_device)) {
 		return false;
 	}
 
@@ -189,7 +215,7 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 #define NETLINK_CREATE_BRIDGE "link add name %s type bridge"
 	g_snprintf(cmd_line, sizeof(cmd_line),
 		NETLINK_CREATE_BRIDGE,
-		config->net.bridge);
+		if_cfg->bridge);
 
 	if (!cc_oci_netlink_run(cmd_line)) {
 		return false;
@@ -199,7 +225,7 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 	/* TODO: Derive non conflicting mac from interface */
 	g_snprintf(cmd_line, sizeof(cmd_line),
 		NETLINK_SET_MAC,
-		config->net.ifname,
+		if_cfg->ifname,
 		"02:00:CA:FE:00:01");
 
 	if (!cc_oci_netlink_run(cmd_line)) {
@@ -209,8 +235,8 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 #define NETLINK_ADD_LINK_BR "link set dev %s master %s"
 	g_snprintf(cmd_line, sizeof(cmd_line),
 		NETLINK_ADD_LINK_BR,
-		config->net.ifname,
-		config->net.bridge);
+		if_cfg->ifname,
+		if_cfg->bridge);
 
 	if (!cc_oci_netlink_run(cmd_line)) {
 		return false;
@@ -218,8 +244,8 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 
 	g_snprintf(cmd_line, sizeof(cmd_line),
 		NETLINK_ADD_LINK_BR,
-		config->net.tap_device,
-		config->net.bridge);
+		if_cfg->tap_device,
+		if_cfg->bridge);
 
 	if (!cc_oci_netlink_run(cmd_line)) {
 		return false;
@@ -228,7 +254,7 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 #define NETLINK_LINK_EN	"link set dev %s up"
 	g_snprintf(cmd_line, sizeof(cmd_line),
 		NETLINK_LINK_EN,
-		config->net.tap_device);
+		if_cfg->tap_device);
 
 	if (!cc_oci_netlink_run(cmd_line)) {
 		return false;
@@ -236,7 +262,7 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 
 	g_snprintf(cmd_line, sizeof(cmd_line),
 		NETLINK_LINK_EN,
-		config->net.ifname);
+		if_cfg->ifname);
 
 	if (!cc_oci_netlink_run(cmd_line)) {
 		return false;
@@ -244,7 +270,7 @@ cc_oci_network_create(const struct cc_oci_config *const config) {
 
 	g_snprintf(cmd_line, sizeof(cmd_line),
 		NETLINK_LINK_EN,
-		config->net.bridge);
+		if_cfg->bridge);
 
 	if (!cc_oci_netlink_run(cmd_line)) {
 		return false;
@@ -346,7 +372,7 @@ out:
  *
  * \param ifname \c interface name
  *
- * \return \c string containing default gw on that interface, else \c ""
+ * \return \c string containing default gw on that interface, else NULL \c ""
  */
 static gchar *
 get_default_gw(const gchar *const ifname)
@@ -397,7 +423,7 @@ get_default_gw(const gchar *const ifname)
 	}
 
 	if (token_count < 3) {
-		g_critical("unable to discover gateway [%s]", output);
+		g_debug("unable to discover gateway on [%s] [%s]", ifname, output);
 		goto out;
 	}
 
@@ -415,9 +441,7 @@ out:
 	if (output != NULL) {
 		g_free(output);
 	}
-	if (gw == NULL) {
-		return g_strdup("");
-	}
+
 	return gw;
 }
 
@@ -441,6 +465,7 @@ cc_oci_network_discover(struct cc_oci_config *const config)
 {
 	struct ifaddrs *ifa = NULL;
 	struct ifaddrs *ifaddrs = NULL;
+	struct cc_oci_net_if_cfg *if_cfg = NULL;
 	gint family;
 	gchar *ifname;
 
@@ -456,7 +481,7 @@ cc_oci_network_discover(struct cc_oci_config *const config)
 
 	g_debug("Discovering container interfaces");
 
-	/* For now pick the first interface with a valid IP address */
+	/* For now add the interfaces with a valid IPv4 address */
 	for (ifa = ifaddrs; ifa != NULL; ifa = ifa->ifa_next) {
 		if (!ifa->ifa_addr) {
 			continue;
@@ -474,16 +499,27 @@ cc_oci_network_discover(struct cc_oci_config *const config)
 		}
 
 		ifname = ifa->ifa_name;
-		config->net.ifname = g_strdup(ifname);
-		config->net.mac_address = get_mac_address(ifname);
-		config->net.tap_device = g_strdup_printf("c%s", ifname);
-		config->net.bridge = g_strdup_printf("b%s", ifname);
-		config->net.ip_address = get_address(family,
+
+		if_cfg = g_malloc0(sizeof(struct cc_oci_net_if_cfg));
+		if (if_cfg == NULL) {
+			g_critical("memory allocation failure");
+			continue;
+		}
+
+		if_cfg->ifname = g_strdup(ifname);
+		if_cfg->mac_address = get_mac_address(ifname);
+		if_cfg->tap_device = g_strdup_printf("c%s", ifname);
+		if_cfg->bridge = g_strdup_printf("b%s", ifname);
+		if_cfg->ip_address = get_address(family,
 			&((struct sockaddr_in *)ifa->ifa_addr)->sin_addr);
-		config->net.subnet_mask = get_address(family,
+		if_cfg->subnet_mask = get_address(family,
 			&((struct sockaddr_in *)ifa->ifa_netmask)->sin_addr);
-		config->net.gateway = get_default_gw(ifname);
-		break;
+
+		config->net.interfaces = g_slist_append(config->net.interfaces, if_cfg);
+
+		if (config->net.gateway == NULL) {
+			config->net.gateway = get_default_gw(ifname);
+		}
 	}
 
 	freeifaddrs(ifaddrs);
@@ -502,7 +538,7 @@ cc_oci_network_discover(struct cc_oci_config *const config)
 	config->net.dns_ip1 = g_strdup("");
 	config->net.dns_ip2 = g_strdup("");
 
-	if (!config->net.ifname) {
+	if (!config->net.interfaces) {
 		g_debug("No container networks discovered, networking disabled");
 	}
 

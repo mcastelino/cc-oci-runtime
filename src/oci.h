@@ -274,10 +274,15 @@ struct cc_oci_net_cfg {
 	/** DNS IP (xxx.xxx.xxx.xxx). */
 	gchar  *dns_ip2;
 
-	/* TODO: Need to support multiple networks
-	 * The parameters below are per network
-	 * interface and we will multiple
-	 */
+	/** Network interfaces. */
+	GSList  *interfaces;
+
+	/** TODO: Add support for routes */
+};
+
+
+/** cc-specific network interface configuration data. */
+struct cc_oci_net_if_cfg {
 
 	/** MAC address with colon separators (xx:xx:xx:xx:xx:xx). */
 	gchar  *mac_address;
