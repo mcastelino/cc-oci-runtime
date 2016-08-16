@@ -45,8 +45,18 @@
 private gchar *sysconfdir = SYSCONFDIR;
 private gchar *defaultsdir = DEFAULTSDIR;
 
+/*!
+ * Generate the expanded kernel network IP configuration
+ * hypervisor arguments to pass to the kernel.
+ * Currently used to pass in the IP configuration of the
+ * first interface.
+ *
+ * \param config \ref cc_oci_config.
+ *
+ * \return \c expanded kernel network IP config command line
+ */
 static gchar *
-cc_oci_expand_net_cmdline(struct cc_oci_config *config) {
+cc_oci_expand_net_kernel_cmdline(struct cc_oci_config *config) {
 	/* www.kernel.org/doc/Documentation/filesystems/nfs/nfsroot.txt
         * ip=<client-ip>:<server-ip>:<gw-ip>:<netmask>:<hostname>:
          * <device>:<autoconf>:<dns0-ip>:<dns1-ip>
@@ -88,6 +98,14 @@ cc_oci_expand_net_cmdline(struct cc_oci_config *config) {
 
 #define QEMU_FMT_NETDEV "tap,ifname=%s,script=no,downscript=no,id=%s"
 
+/*!
+ * Generate the expanded netdev hypervisor arguments to use.
+ * for a particular interface
+ *
+ * \param config \ref cc_oci_net_ifconfig.
+ *
+ * \return \c expanded 
+ */
 static gchar *
 cc_oci_expand_netdev_cmdline(struct cc_oci_net_if_cfg *config) {
 
@@ -99,6 +117,14 @@ cc_oci_expand_netdev_cmdline(struct cc_oci_net_if_cfg *config) {
 #define QEMU_FMT_DEVICE "driver=virtio-net,netdev=%s"
 #define QEMU_FMT_DEVICE_MAC QEMU_FMT_DEVICE ",mac=%s"
 
+/*!
+ * Generate the expanded device hypervisor arguments to use.
+ * for a particular interface
+ *
+ * \param config \ref cc_oci_net_ifconfig.
+ *
+ * \return \c expanded device command line
+ */
 static gchar *
 cc_oci_expand_net_device_cmdline(struct cc_oci_net_if_cfg *config) {
 
@@ -110,6 +136,113 @@ cc_oci_expand_net_device_cmdline(struct cc_oci_net_if_cfg *config) {
 			config->tap_device,
 			config->mac_address);
 	}
+}
+
+/*!
+ * Return all special tokens related to hyperviso networking
+ * parameters
+ *
+ * \param config \ref cc_oci_config.
+ * \param[in, out] netdev_option
+ * \param[in, out] netdev_params
+ * \param[in, out] net_device_option
+ * \param[in, out] net_device_params
+ * \param[in, out] netdev2_option
+ * \param[in, out] netdev2_params
+ * \param[in, out] net_device2_option
+ * \param[in, out] net_device2_params
+ *
+ * \warning this is not very efficient.
+ *
+ * \return \c true on success, else \c false.
+ */
+
+static gboolean
+cc_oci_expand_network_cmdline(struct cc_oci_config *config,
+			      gchar **netdev_option,
+			      gchar **netdev_params,
+			      gchar **net_device_option,
+			      gchar **net_device_params,
+			      gchar **netdev2_option,
+			      gchar **netdev2_params,
+			      gchar **net_device2_option,
+			      gchar **net_device2_params) {
+
+	struct cc_oci_net_if_cfg *if_cfg = NULL;
+	guint num_interfaces = 0;
+	guint index = 0;
+
+	*netdev_option = NULL;
+	*netdev_params = NULL;
+	*net_device_option = NULL;
+	*net_device_params = NULL;
+
+	if (config->net.interfaces == NULL) {
+		/* Support --net=none */
+		/* Hacky, no clean way to add/remove args today
+		 * For multiple network we need to have a way to append
+		 * args to the hypervisor command line vs substitution
+		 */
+		*netdev_option = g_strdup("-net");
+		*netdev_params = g_strdup("none");
+		*net_device_option = g_strdup("-net");
+		*net_device_params = g_strdup("none");
+		return true;
+	}
+
+
+	num_interfaces = g_slist_length(config->net.interfaces);
+	g_debug("number of network interfaces %d", num_interfaces);
+
+	for (index = 0; index < num_interfaces; index++) {
+		guint i = 0;
+		struct cc_oci_net_if_cfg *prev_cfg = NULL;
+
+		if_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, index);
+
+		g_debug("processing [%d] [%s]", index, if_cfg->ifname);
+
+		/* skip duplicates */
+		for (i=0; i < index; i++) {
+			prev_cfg = g_slist_nth_data(config->net.interfaces, i);
+
+			if (!g_strcmp0(if_cfg->ifname, prev_cfg->ifname)) {
+				g_debug("skipping duplicate [%d] [%s]",
+					i, if_cfg->ifname);
+				continue;
+			}
+		}
+
+		if (*netdev_option == NULL){
+			g_debug("first interface [%d] [%s]", index, if_cfg->ifname);
+			*netdev_option = g_strdup("-netdev");
+			*net_device_option = g_strdup("-device");
+			*netdev_params = cc_oci_expand_netdev_cmdline(if_cfg);
+			*net_device_params = cc_oci_expand_net_device_cmdline(if_cfg);
+			continue;
+		}
+
+		if (*netdev2_option == NULL) {
+			g_debug("second interface [%d] [%s]", index, if_cfg->ifname);
+			*netdev2_option = g_strdup("-netdev");
+			*net_device2_option = g_strdup("-device");
+			*netdev2_params = cc_oci_expand_netdev_cmdline(if_cfg);
+			*net_device2_params = cc_oci_expand_net_device_cmdline(if_cfg);
+			/* we support only two for now */
+			break;
+		}
+
+	}
+
+	if (*netdev2_option == NULL) {
+		*netdev2_option = g_strdup("-net");
+		*netdev2_params = g_strdup("none");
+		*net_device2_option = g_strdup("-net");
+		*net_device2_params = g_strdup("none");
+	}
+
+	return true;
 }
 
 
@@ -147,6 +280,10 @@ cc_oci_expand_cmdline (struct cc_oci_config *config,
 	gchar            *netdev_params = NULL;
 	gchar            *net_device_option = NULL;
 	gchar            *netdev_option = NULL;
+	gchar            *net_device2_params = NULL;
+	gchar            *netdev2_params = NULL;
+	gchar            *net_device2_option = NULL;
+	gchar            *netdev2_option = NULL;
 
 	if (! (config && args)) {
 		return false;
@@ -280,27 +417,17 @@ cc_oci_expand_cmdline (struct cc_oci_config *config,
 
 	procsock_device = g_strdup_printf ("socket,id=procsock,path=%s,server,nowait", config->state.procsock_path);
 
-	kernel_net_params = cc_oci_expand_net_cmdline(config);
+	kernel_net_params = cc_oci_expand_net_kernel_cmdline(config);
 
-	if ( config->net.interfaces == NULL ) {
-		/* Support --net=none */
-		/* Hacky, no clean way to add/remove args today
-		 * For multiple network we need to have a way to append
-		 * args to the hypervisor command line vs substitution
-		 */
-		netdev_option = g_strdup("-net");
-		netdev_params = g_strdup("none");
-		net_device_option = g_strdup("-net");
-		net_device_params = g_strdup("none");
-	} else {
-		struct cc_oci_net_if_cfg *if_cfg = NULL;
-		if_cfg = (struct cc_oci_net_if_cfg *)
-			g_slist_nth_data(config->net.interfaces, 0);
-		netdev_option = g_strdup("-netdev");
-		net_device_option = g_strdup("-device");
-		netdev_params = cc_oci_expand_netdev_cmdline(if_cfg);
-		net_device_params = cc_oci_expand_net_device_cmdline(if_cfg);
-	}
+	cc_oci_expand_network_cmdline(config,
+				&netdev_option,
+				&netdev_params,
+				&net_device_option,
+				&net_device_params,
+				&netdev2_option,
+				&netdev2_params,
+				&net_device2_option,
+				&net_device2_params);
 
 	/* Note: @NETDEV@: For multiple network we need to have a way to append
 	 * args to the hypervisor command line vs substitution
@@ -324,6 +451,10 @@ cc_oci_expand_cmdline (struct cc_oci_config *config,
 		{ "@NETDEV_PARAMS@"     , netdev_params              },
 		{ "@NETDEVICE@"         , net_device_option          },
 		{ "@NETDEVICE_PARAMS@"  , net_device_params          },
+		{ "@NETDEV2@"           , netdev2_option             },
+		{ "@NETDEV2_PARAMS@"    , netdev2_params             },
+		{ "@NETDEVICE2@"        , net_device2_option         },
+		{ "@NETDEVICE2_PARAMS@" , net_device2_params         },
 		{ NULL }
 	};
 

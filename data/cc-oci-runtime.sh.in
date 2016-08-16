@@ -23,18 +23,18 @@
 #
 # See https://github.com/01org/cc-oci-runtime/issues/42
 
-runtime="@bindir@/@PACKAGE_NAME@"
+runtime="/usr/bin/cc-oci-runtime"
 
-global_log="/run/opencontainer/containers/@PACKAGE_NAME@.log"
+global_log="/run/opencontainer/containers/cc-oci-runtime.log"
 
 # Set as required
 runtime_args=""
 
 # Uncomment to enable the global log which will persist after a Clear
 # Container is destroyed.
-## runtime_args="$runtime_args --global-log=\"$global_log\""
+runtime_args="${runtime_args} --global-log=${global_log}"
 
 # Uncomment to supplement the log with debug information
-## runtime_args="$runtime_args --debug"
+runtime_args="${runtime_args} --debug"
 
-exec "$runtime" "$runtime_args" $@ 
+exec "${runtime}" "--global-log=/run/opencontainer/containers/cc-oci-runtime.log" "--debug" $@ 

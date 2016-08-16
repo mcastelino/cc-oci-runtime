@@ -433,6 +433,7 @@ get_default_gw(const gchar *const ifname)
 	}
 
 	gw = g_strdup(output_tokens[2]);
+	g_debug("default gw [%s]", gw);
 
 out:
 	if (output_tokens != NULL) {
@@ -541,6 +542,8 @@ cc_oci_network_discover(struct cc_oci_config *const config)
 	if (!config->net.interfaces) {
 		g_debug("No container networks discovered, networking disabled");
 	}
+
+	g_debug("[%d] networks discovered", g_slist_length(config->net.interfaces));
 
 	return true;
 }

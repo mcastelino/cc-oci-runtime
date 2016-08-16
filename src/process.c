@@ -463,6 +463,8 @@ cc_oci_vm_netcfg_to_strv (struct cc_oci_config *config)
 	struct cc_oci_net_if_cfg *if_cfg = NULL;
 	gchar  **cfg = NULL;
 	gsize    count = 0;
+	guint num_interfaces = 0;
+	guint i;
 
 	if (! config) {
 		return NULL;
@@ -472,38 +474,27 @@ cc_oci_vm_netcfg_to_strv (struct cc_oci_config *config)
 		return NULL;
 	}
 
-
-
 	if (config->net.hostname)    count++;
 	if (config->net.gateway)     count++;
 	if (config->net.dns_ip1)     count++;
 	if (config->net.dns_ip2)     count++;
 
-	/* TODO: For now we are only sending in the
-	 * first IP that we saw. In the future this
-	 * IP along with all the other IP's will
-	 * be sent into the VM and the will be setup
-	 * within the VM by an agent
-	 * The interfaces can be indentified by thier
-	 * macaddress within the VM
-	 * The interface name within the VM may also
-	 * need to be changed to reflect the name
-	 * in the namespace
-	 */
-
 	if (config->net.interfaces != NULL) {
-		if_cfg = (struct cc_oci_net_if_cfg *)
-			g_slist_nth_data(config->net.interfaces, 0);
-	}
+		num_interfaces = g_slist_length(config->net.interfaces);
 
-	if (if_cfg != NULL) {
-		if (if_cfg->mac_address)   count++;
-		if (if_cfg->ipv6_address) count++;
-		if (if_cfg->ip_address)    count++;
-		if (if_cfg->subnet_mask)  count++;
-		if (if_cfg->ifname)        count++;
-		if (if_cfg->bridge)        count++;
-		if (if_cfg->tap_device)  count++;
+		for (i=0; i < num_interfaces; i++) {
+
+			if_cfg = (struct cc_oci_net_if_cfg *)
+				g_slist_nth_data(config->net.interfaces, i);
+
+			if (if_cfg->mac_address)   count++;
+			if (if_cfg->ipv6_address) count++;
+			if (if_cfg->ip_address)    count++;
+			if (if_cfg->subnet_mask)  count++;
+			if (if_cfg->ifname)        count++;
+			if (if_cfg->bridge)        count++;
+			if (if_cfg->tap_device)  count++;
+		}
 	}
 
 
@@ -537,40 +528,48 @@ cc_oci_vm_netcfg_to_strv (struct cc_oci_config *config)
 				config->net.dns_ip2);
 	}
 
-	if (if_cfg != NULL) {
-		if (if_cfg->mac_address) {
-			cfg[--count] = g_strdup_printf ("@MAC_ADDRESS@=%s",
-				if_cfg->mac_address);
-		}
+	if (config->net.interfaces != NULL) {
+		g_debug("populating interfaces [%d]", num_interfaces);
 
-		if (if_cfg->ipv6_address) {
-			cfg[--count] = g_strdup_printf ("@IPV6_ADDRESS@=%s",
-				if_cfg->ipv6_address);
-		}
+		for (i=0; i < num_interfaces; i++) {
+			g_debug("populating interface #[%d]", i);
+			if_cfg = (struct cc_oci_net_if_cfg *)
+				g_slist_nth_data(config->net.interfaces, i);
 
-		if (if_cfg->ip_address) {
-			cfg[--count] = g_strdup_printf ("@IP_ADDRESS@=%s",
-				if_cfg->ip_address);
-		}
+			if (if_cfg->mac_address) {
+				cfg[--count] = g_strdup_printf ("@MAC_ADDRESS@=%s",
+					if_cfg->mac_address);
+			}
 
-		if (if_cfg->subnet_mask) {
-			cfg[--count] = g_strdup_printf ("@SUBNET_MASK@=%s",
-				if_cfg->subnet_mask);
-		}
+			if (if_cfg->ipv6_address) {
+				cfg[--count] = g_strdup_printf ("@IPV6_ADDRESS@=%s",
+					if_cfg->ipv6_address);
+			}
 
-		if (if_cfg->ifname) {
-			cfg[--count] = g_strdup_printf ("@IFNAME@=%s",
-				if_cfg->ifname);
-		}
+			if (if_cfg->ip_address) {
+				cfg[--count] = g_strdup_printf ("@IP_ADDRESS@=%s",
+					if_cfg->ip_address);
+			}
 
-		if (if_cfg->bridge) {
-			cfg[--count] = g_strdup_printf ("@BRIDGE@=%s",
-				if_cfg->bridge);
-		}
+			if (if_cfg->subnet_mask) {
+				cfg[--count] = g_strdup_printf ("@SUBNET_MASK@=%s",
+					if_cfg->subnet_mask);
+			}
 
-		if (if_cfg->tap_device) {
-			cfg[--count] = g_strdup_printf ("@TAP_DEVICE@=%s",
-				if_cfg->tap_device);
+			if (if_cfg->ifname) {
+				cfg[--count] = g_strdup_printf ("@IFNAME@=%s",
+					if_cfg->ifname);
+			}
+
+			if (if_cfg->bridge) {
+				cfg[--count] = g_strdup_printf ("@BRIDGE@=%s",
+					if_cfg->bridge);
+			}
+
+			if (if_cfg->tap_device) {
+				cfg[--count] = g_strdup_printf ("@TAP_DEVICE@=%s",
+					if_cfg->tap_device);
+			}
 		}
 	}
 
@@ -594,6 +593,7 @@ cc_oci_vm_netcfg_from_str (struct cc_oci_config *config,
 	gchar  **lines = NULL;
 	gchar  **line;
 	struct cc_oci_net_if_cfg *if_cfg = NULL;
+	guint num_interfaces = 0;
 
 	if (! (config && netcfg)) {
 		return false;
@@ -605,15 +605,6 @@ cc_oci_vm_netcfg_from_str (struct cc_oci_config *config,
 	}
 
 
-	if_cfg = g_malloc0(sizeof(struct cc_oci_net_if_cfg));
-	if (if_cfg == NULL) {
-		g_critical("memory allocation failure");
-		return false;
-	}
-
-	config->net.interfaces = g_slist_append(config->net.interfaces, if_cfg);
-
-
 	for (line = lines; line && *line; line++) {
 		gchar **fields;
 
@@ -621,6 +612,7 @@ cc_oci_vm_netcfg_from_str (struct cc_oci_config *config,
 		if (! fields) {
 			break;
 		}
+
 		if (! g_strcmp0 (fields[0], "@HOSTNAME@")) {
 			config->net.hostname = g_strdup (fields[1]);
 		} else if (! g_strcmp0 (fields[0], "@GATEWAY@")) {
@@ -629,20 +621,39 @@ cc_oci_vm_netcfg_from_str (struct cc_oci_config *config,
 			config->net.dns_ip1 = g_strdup (fields[1]);
 		} else if (! g_strcmp0 (fields[0], "@DNS_IP2@")) {
 			config->net.dns_ip2 = g_strdup (fields[1]);
-		} else if (! g_strcmp0 (fields[0], "@MAC_ADDRESS@")) {
-			if_cfg->mac_address = g_strdup (fields[1]);
-		} else if (! g_strcmp0 (fields[0], "@IPV6_ADDRESS@")) {
-			if_cfg->ipv6_address = g_strdup (fields[1]);
-		} else if (! g_strcmp0 (fields[0], "@IP_ADDRESS@")) {
-			if_cfg->ip_address = g_strdup (fields[1]);
-		} else if (! g_strcmp0 (fields[0], "@SUBNET_MASK@")) {
-			if_cfg->subnet_mask = g_strdup (fields[1]);
-		} else if (! g_strcmp0 (fields[0], "@IFNAME@")) {
-			if_cfg->ifname = g_strdup (fields[1]);
-		} else if (! g_strcmp0 (fields[0], "@BRIDGE@")) {
-			if_cfg->bridge = g_strdup (fields[1]);
 		} else if (! g_strcmp0 (fields[0], "@TAP_DEVICE@")) {
+			/*TODO: Hack... Add a interface delimiter */
+			if_cfg = g_malloc0(sizeof(struct cc_oci_net_if_cfg));
+			if (if_cfg == NULL) {
+				g_critical("memory allocation failure");
+				return false;
+			}
+			config->net.interfaces =
+				g_slist_append(config->net.interfaces, if_cfg);
+			num_interfaces++;
+			g_debug("new interface allocated [%d]", num_interfaces);
+
 			if_cfg->tap_device = g_strdup (fields[1]);
+			g_debug("tap[%d] %s", num_interfaces, if_cfg->tap_device);
+		} else {
+			g_debug("processing [%s] [%s]", fields[0], fields[1]);
+			if (!if_cfg) {
+				g_critical("NULL pointer %d", num_interfaces);
+				continue;
+			}
+			if (! g_strcmp0 (fields[0], "@MAC_ADDRESS@")) {
+				if_cfg->mac_address = g_strdup (fields[1]);
+			} else if (! g_strcmp0 (fields[0], "@IPV6_ADDRESS@")) {
+				if_cfg->ipv6_address = g_strdup (fields[1]);
+			} else if (! g_strcmp0 (fields[0], "@IP_ADDRESS@")) {
+				if_cfg->ip_address = g_strdup (fields[1]);
+			} else if (! g_strcmp0 (fields[0], "@SUBNET_MASK@")) {
+				if_cfg->subnet_mask = g_strdup (fields[1]);
+			} else if (! g_strcmp0 (fields[0], "@IFNAME@")) {
+				if_cfg->ifname = g_strdup (fields[1]);
+			} else if (! g_strcmp0 (fields[0], "@BRIDGE@")) {
+				if_cfg->bridge = g_strdup (fields[1]);
+			}
 		}
 
 		g_strfreev (fields);
