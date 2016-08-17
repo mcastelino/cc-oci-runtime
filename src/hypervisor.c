@@ -151,6 +151,10 @@ cc_oci_expand_net_device_cmdline(struct cc_oci_net_if_cfg *config) {
  * \param[in, out] netdev2_params
  * \param[in, out] net_device2_option
  * \param[in, out] net_device2_params
+ * \param[in, out] netdev3_option
+ * \param[in, out] netdev3_params
+ * \param[in, out] net_device3_option
+ * \param[in, out] net_device3_params
  *
  * \warning this is not very efficient.
  *
@@ -166,7 +170,11 @@ cc_oci_expand_network_cmdline(struct cc_oci_config *config,
 			      gchar **netdev2_option,
 			      gchar **netdev2_params,
 			      gchar **net_device2_option,
-			      gchar **net_device2_params) {
+			      gchar **net_device2_params,
+			      gchar **netdev3_option,
+			      gchar **netdev3_params,
+			      gchar **net_device3_option,
+			      gchar **net_device3_params) {
 
 	struct cc_oci_net_if_cfg *if_cfg = NULL;
 	guint num_interfaces = 0;
@@ -196,6 +204,7 @@ cc_oci_expand_network_cmdline(struct cc_oci_config *config,
 
 	for (index = 0; index < num_interfaces; index++) {
 		guint i = 0;
+		gboolean duplicated = false;
 		struct cc_oci_net_if_cfg *prev_cfg = NULL;
 
 		if_cfg = (struct cc_oci_net_if_cfg *)
@@ -210,8 +219,13 @@ cc_oci_expand_network_cmdline(struct cc_oci_config *config,
 			if (!g_strcmp0(if_cfg->ifname, prev_cfg->ifname)) {
 				g_debug("skipping duplicate [%d] [%s]",
 					i, if_cfg->ifname);
-				continue;
+				duplicated = true;
+				break;
 			}
+		}
+
+		if (duplicated) {
+			continue;
 		}
 
 		if (*netdev_option == NULL){
@@ -229,8 +243,16 @@ cc_oci_expand_network_cmdline(struct cc_oci_config *config,
 			*net_device2_option = g_strdup("-device");
 			*netdev2_params = cc_oci_expand_netdev_cmdline(if_cfg);
 			*net_device2_params = cc_oci_expand_net_device_cmdline(if_cfg);
-			/* we support only two for now */
-			break;
+			continue;
+		}
+
+		if (*netdev3_option == NULL) {
+			g_debug("third interface [%d] [%s]", index, if_cfg->ifname);
+			*netdev3_option = g_strdup("-netdev");
+			*net_device3_option = g_strdup("-device");
+			*netdev3_params = cc_oci_expand_netdev_cmdline(if_cfg);
+			*net_device3_params = cc_oci_expand_net_device_cmdline(if_cfg);
+			continue;
 		}
 
 	}
@@ -240,6 +262,13 @@ cc_oci_expand_network_cmdline(struct cc_oci_config *config,
 		*netdev2_params = g_strdup("none");
 		*net_device2_option = g_strdup("-net");
 		*net_device2_params = g_strdup("none");
+	}
+
+	if (*netdev3_option == NULL) {
+		*netdev3_option = g_strdup("-net");
+		*netdev3_params = g_strdup("none");
+		*net_device3_option = g_strdup("-net");
+		*net_device3_params = g_strdup("none");
 	}
 
 	return true;
@@ -284,6 +313,10 @@ cc_oci_expand_cmdline (struct cc_oci_config *config,
 	gchar            *netdev2_params = NULL;
 	gchar            *net_device2_option = NULL;
 	gchar            *netdev2_option = NULL;
+	gchar            *net_device3_params = NULL;
+	gchar            *netdev3_params = NULL;
+	gchar            *net_device3_option = NULL;
+	gchar            *netdev3_option = NULL;
 
 	if (! (config && args)) {
 		return false;
@@ -427,7 +460,11 @@ cc_oci_expand_cmdline (struct cc_oci_config *config,
 				&netdev2_option,
 				&netdev2_params,
 				&net_device2_option,
-				&net_device2_params);
+				&net_device2_params,
+				&netdev3_option,
+				&netdev3_params,
+				&net_device3_option,
+				&net_device3_params);
 
 	/* Note: @NETDEV@: For multiple network we need to have a way to append
 	 * args to the hypervisor command line vs substitution
@@ -457,6 +494,10 @@ cc_oci_expand_cmdline (struct cc_oci_config *config,
 		{ "@NETDEV2_PARAMS@"    , netdev2_params             },
 		{ "@NETDEVICE2@"        , net_device2_option         },
 		{ "@NETDEVICE2_PARAMS@" , net_device2_params         },
+		{ "@NETDEV3@"           , netdev3_option             },
+		{ "@NETDEV3_PARAMS@"    , netdev3_params             },
+		{ "@NETDEVICE3@"        , net_device3_option         },
+		{ "@NETDEVICE3_PARAMS@" , net_device3_params         },
 		{ NULL }
 	};
 

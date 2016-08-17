@@ -550,6 +550,8 @@ cc_oci_create_container_networking_workload (struct cc_oci_config *config)
 	struct cc_oci_net_if_cfg *if0_cfg = NULL;
 	struct cc_oci_net_if_cfg *if1_cfg = NULL;
 	struct cc_oci_net_if_cfg *if2_cfg = NULL;
+	struct cc_oci_net_if_cfg *if3_cfg = NULL;
+	struct cc_oci_net_if_cfg *if4_cfg = NULL;
 	gchar *if0	= NULL;
 	gchar *mac0	= NULL;
 	gchar *ifother	= NULL;
@@ -604,8 +606,8 @@ cc_oci_create_container_networking_workload (struct cc_oci_config *config)
 			config->net.gateway,
 			workload_cmdline);
 		break;
+	/* HACK: swarm hacks */
 	case 3:
-		/* HACK: swarm hack */
 		if0_cfg = (struct cc_oci_net_if_cfg *)
 			g_slist_nth_data(config->net.interfaces, 0);
 		if1_cfg = (struct cc_oci_net_if_cfg *)
@@ -647,6 +649,61 @@ cc_oci_create_container_networking_workload (struct cc_oci_config *config)
 			if0_cfg->ip_address, if0_cfg->subnet_mask, if0_cfg->ifname,
 			if1_cfg->ip_address, if1_cfg->subnet_mask, if1_cfg->ifname,
 			if2_cfg->ip_address, if2_cfg->subnet_mask, if2_cfg->ifname,
+			config->net.gateway,
+			workload_cmdline);
+		break;
+	case 5:
+		if0_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 0);
+		if1_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 1);
+		if2_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 2);
+		if3_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 3);
+		if4_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 4);
+
+		if0 = if0_cfg->ifname;
+		mac0 = if0_cfg->mac_address;
+
+		if (!g_strcmp0(if0, if1_cfg->ifname)) {
+			ifother = if2_cfg->ifname;
+		} else {
+			ifother = if1_cfg->ifname;
+		}
+
+		g_string_printf(contents,
+			"#!%s\n"
+			"cd %s\n"
+			"hostname `cat /etc/hostname`\n"
+			"matches=`ip link show enp0s4 | grep \"%s\" | wc -l`\n"
+			"if [ $matches = 1 ]; then\n"
+				"ip link set dev enp0s4 name %s up\n"
+				"ip link set dev enp0s5 name %s up\n"
+				"ip link set dev enp0s6 name %s up\n"
+			"else\n"
+				"ip link set dev enp0s5 name %s up\n"
+				"ip link set dev enp0s4 name %s up\n"
+				"ip link set dev enp0s6 name %s up\n"
+			"fi\n"
+			"ip addr add %s/%s dev %s \n"
+			"ip addr add %s/%s dev %s \n"
+			"ip addr add %s/%s dev %s \n"
+			"ip addr add %s/%s dev %s \n"
+			"ip addr add %s/%s dev %s \n"
+			"ip route add default via %s\n"
+			"%s\n",
+			CC_OCI_WORKLOAD_SHELL,
+			cwd,
+			mac0,
+			if0, ifother, if3_cfg->ifname,
+			ifother, if0, if3_cfg->ifname,
+			if0_cfg->ip_address, if0_cfg->subnet_mask, if0_cfg->ifname,
+			if1_cfg->ip_address, if1_cfg->subnet_mask, if1_cfg->ifname,
+			if2_cfg->ip_address, if2_cfg->subnet_mask, if2_cfg->ifname,
+			if3_cfg->ip_address, if3_cfg->subnet_mask, if3_cfg->ifname,
+			if4_cfg->ip_address, if4_cfg->subnet_mask, if4_cfg->ifname,
 			config->net.gateway,
 			workload_cmdline);
 		break;
