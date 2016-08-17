@@ -439,7 +439,9 @@ cc_oci_expand_cmdline (struct cc_oci_config *config,
 		{ "@WORKLOAD_DIR@"      , config->oci.root.path      },
 		{ "@KERNEL@"            , config->vm->kernel_path    },
 		{ "@KERNEL_PARAMS@"     , config->vm->kernel_params  },
+		/*
 		{ "@KERNEL_NET_PARAMS@" , kernel_net_params          },
+		*/
 		{ "@IMAGE@"             , config->vm->image_path     },
 		{ "@SIZE@"              , bytes                      },
 		{ "@COMMS_SOCKET@"      , config->state.comms_path   },

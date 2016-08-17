@@ -808,6 +808,13 @@ cc_oci_vm_launch (struct cc_oci_config *config)
 			goto out;
 		}
 
+
+		ret = cc_oci_create_container_networking_workload (config);
+		if (! ret) {
+			g_critical ("failed to recreate workload file");
+			goto out;
+		}
+
 		g_debug ("running command:");
 		for (p = args; p && *p; p++) {
 			g_debug ("arg: '%s'", *p);

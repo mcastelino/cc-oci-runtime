@@ -523,6 +523,167 @@ fail1:
 }
 
 /*!
+ * Recreate the containers Clear Linux workload file
+ * adding the networking information
+ *
+ * (\ref CC_OCI_WORKLOAD_FILE).
+ *
+ * \param config \ref cc_oci_config.
+ *
+ * \warning FIXME: Need to support running the workload as a different user/group.
+ * Something like:
+ *
+ *      su -c "sg $group -c $cmd" $user
+ *
+ * \return \c true on success, else \c false.
+ */
+gboolean
+cc_oci_create_container_networking_workload (struct cc_oci_config *config)
+{
+	GString           *contents = NULL;
+	GError            *err = NULL;
+	gchar             *workload_cmdline = NULL;
+	g_autofree gchar   *cwd = NULL;
+	gboolean           ret = false;
+	guint		  num_interfaces;
+	struct cc_oci_net_if_cfg *if_cfg = NULL;
+	struct cc_oci_net_if_cfg *if0_cfg = NULL;
+	struct cc_oci_net_if_cfg *if1_cfg = NULL;
+	struct cc_oci_net_if_cfg *if2_cfg = NULL;
+	gchar *if0	= NULL;
+	gchar *mac0	= NULL;
+	gchar *ifother	= NULL;
+
+
+	if (! (config && config->oci.process.args)) {
+		return false;
+	}
+
+	if (config->net.interfaces == NULL) {
+		return true;
+	}
+
+	if (! config->vm) {
+		g_critical ("No vm configuration");
+		goto out;
+	}
+
+	cwd = g_shell_quote (config->oci.process.cwd);
+	if (! cwd) {
+		return false;
+	}
+
+	workload_cmdline = g_strjoinv (" ", config->oci.process.args);
+	if (! workload_cmdline) {
+		goto out;
+	}
+
+	contents = g_string_new("");
+	if (! contents) {
+		goto out;
+	}
+
+	num_interfaces = g_slist_length(config->net.interfaces);
+	switch (num_interfaces) {
+	case 1:
+		if_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 0);
+
+		g_string_printf(contents,
+			"#!%s\n"
+			"cd %s\n"
+			"hostname `cat /etc/hostname`\n"
+			"ip link set dev enp0s4 name %s up\n"
+			"ip addr add %s/%s dev %s \n"
+			"ip route add default via %s\n"
+			"%s\n",
+			CC_OCI_WORKLOAD_SHELL,
+			cwd,
+			if_cfg->ifname,
+			if_cfg->ip_address, if_cfg->subnet_mask, if_cfg->ifname,
+			config->net.gateway,
+			workload_cmdline);
+		break;
+	case 3:
+		/* HACK: swarm hack */
+		if0_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 0);
+		if1_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 1);
+		if2_cfg = (struct cc_oci_net_if_cfg *)
+			g_slist_nth_data(config->net.interfaces, 2);
+
+		if0 = if0_cfg->ifname;
+		mac0 = if0_cfg->mac_address;
+
+		if (!g_strcmp0(if0, if1_cfg->ifname)) {
+			ifother = if2_cfg->ifname;
+		} else {
+			ifother = if1_cfg->ifname;
+		}
+
+		g_string_printf(contents,
+			"#!%s\n"
+			"cd %s\n"
+			"hostname `cat /etc/hostname`\n"
+			"matches=`ip link show enp0s4 | grep \"%s\" | wc -l`\n"
+			"if [ $matches = 1 ]; then\n"
+				"ip link set dev enp0s4 name %s up\n"
+				"ip link set dev enp0s5 name %s up\n"
+			"else\n"
+				"ip link set dev enp0s5 name %s up\n"
+				"ip link set dev enp0s4 name %s up\n"
+			"fi\n"
+			"ip addr add %s/%s dev %s \n"
+			"ip addr add %s/%s dev %s \n"
+			"ip addr add %s/%s dev %s \n"
+			"ip route add default via %s\n"
+			"%s\n",
+			CC_OCI_WORKLOAD_SHELL,
+			cwd,
+			mac0,
+			if0, ifother,
+			ifother, if0,
+			if0_cfg->ip_address, if0_cfg->subnet_mask, if0_cfg->ifname,
+			if1_cfg->ip_address, if1_cfg->subnet_mask, if1_cfg->ifname,
+			if2_cfg->ip_address, if2_cfg->subnet_mask, if2_cfg->ifname,
+			config->net.gateway,
+			workload_cmdline);
+		break;
+	}
+
+	g_debug("Workload [\n%s\n]", contents->str);
+
+	ret = g_file_set_contents (config->vm->workload_path,
+			contents->str, (gssize)contents->len, &err);
+
+	if (! ret) {
+		g_critical ("failed to create workload file (%s): %s",
+				config->vm->workload_path, err->message);
+		g_error_free (err);
+		goto out;
+	}
+
+	if (g_chmod (config->vm->workload_path, CC_OCI_SCRIPT_MODE) < 0) {
+		g_critical ("failed to set mode for file file %s",
+				config->vm->workload_path);
+		goto out;
+	}
+
+	g_debug ("updated workload_path %s", config->vm->workload_path);
+
+	ret = true;
+
+out:
+	g_free_if_set (workload_cmdline);
+	if (contents) {
+		g_string_free(contents, true);
+	}
+
+	return ret;
+}
+
+/*!
  * Create the containers Clear Linux workload file
  * (\ref CC_OCI_WORKLOAD_FILE).
  *
@@ -611,6 +772,7 @@ cc_oci_create_container_workload (struct cc_oci_config *config)
 	g_string_printf(contents,
 			"#!%s\n"
 			"cd %s\n"
+			"hostname `cat /etc/hostname`\n"
 			"%s\n",
 			CC_OCI_WORKLOAD_SHELL,
 			cwd,
@@ -618,6 +780,8 @@ cc_oci_create_container_workload (struct cc_oci_config *config)
 
 	ret = g_file_set_contents (config->vm->workload_path,
 			contents->str, (gssize)contents->len, &err);
+
+	g_debug("first workload [\n%s\n]", contents->str);
 
 	if (! ret) {
 		g_critical ("failed to create workload file (%s): %s",
